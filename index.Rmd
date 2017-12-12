@@ -1,0 +1,148 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "JP Van Steerteghem"
+date: "12/11/2017"
+output: html_document
+---
+
+# 1. Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These types of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, we use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. 
+
+These participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: 
+
+- correct = exactly according to the specification (Class A), 
+- wrong = throwing the elbows to the front (Class B), 
+- wrong = lifting the dumbbell only halfway (Class C), 
+- wrong = lowering the dumbbell only halfway (Class D) 
+- wrong = throwing the hips to the front (Class E)
+
+More information is available from the website here: [http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har] [1] (see the section on the Weight Lifting Exercise Dataset).
+
+[1]:http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har "http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har"
+
+#2.The question;
+Predict how an exercise was executed (ie. which Class) by taking the output from the 4 accelerometers.
+
+The following steps were taken to complete the project.
+
+1. Load & clean the data and do some exploratory analysis
+2. Reduce the number of variables
+3. Split the data into a training set and a test set
+4. Run 3 prediction models; Prediction with Decision Trees using cross validation, Prediction with Random Forest using cross validation and Prediction with Generalized Boosted Regression.
+5. Chose a model and run it against the test cases of the course's prediction quizz
+
+#3.Load, clean the data and do some exploratory analysis
+```{r}
+library(caret)
+library(rpart)
+library(randomForest)
+library(knitr)
+
+setwd("/Users/jvanstee/datasciencecoursera/practicalmachinelearning")
+
+trainURL <-
+  "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv" 
+
+testURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+```
+
+#4.Reduce the number of variables
+A quick review of the excel files show that many columns are filled with NA, #DIV/0! and blank values.  Since they are non-valid values we remove them from the data set with na.strings parameter upon saving.
+Since the first 7 columns contain non-predictors we remove them from the dataset as well.
+``` {r}
+training <- read.csv(url(trainURL),na.strings = c("NA","#DIV/0!"," "))
+
+quizz <- read.csv(url(testURL),na.strings = c("NA","#DIV/0!"," "))
+#remove non valid observation values
+training <- training[,colSums(is.na(training))==0]
+
+quizz <- quizz[,colSums(is.na(quizz))==0]
+
+#remove first 7 columns
+training <- training[,-c(1:7)]
+
+dim(training)
+
+quizz <- quizz[,-c(1:7)]
+
+dim(quizz)
+```
+After this operation the remaining training set still contains 19,622 observations, but the number of predictors were reduced to 53 from 160.
+
+#5.Create train and test data sets
+Create a training set (Train.set with 60% of training file) and testing set (Test.set with 40% of training file).
+``` {r}
+inTrain <- createDataPartition(training$classe, p= 0.6, list = FALSE)
+
+Train.set <- training[inTrain,]
+
+Test.set <- training[-inTrain,]
+
+dim(Train.set)
+dim(Test.set)
+```
+
+#6.Multi Core Processing
+Since many algorithms in the Caret package are computationally intensive we enable multicore processing to expedite the computations.  This project was run on MacBook Air on one Intel Core i7 processor with two cores.
+```{r}
+#multicore Parallel processing
+library(doMC)
+doMC::registerDoMC(cores=2)
+```
+
+#7.Data Modeling
+We run several prediction models and will pick the best one.
+
+##7.1 Prediction with Decision Trees using cross validation
+```{r}
+#Model Decison Trees rpart with scaling and cross validation
+set.seed(1234)
+Model.rpart1 <- train(classe ~ ., preProcess = c("center","scale"),trControl = trainControl(method = "cv",number = 4),data = Train.set, method = "rpart")
+print(Model.rpart1)
+
+predictions.rpart1 <- predict(Model.rpart1,newdata = Test.set)
+
+confusionMatrix(predictions.rpart1,Test.set$classe)
+
+```
+The accuracy of this model at 50% is low.  Next we'll run a prediction with Random Forest.
+
+##7.2 Prediction with Random Forest using cross validation
+```{r}
+#Model Random Forest
+set.seed(12345)
+
+Model.rf <- train(classe ~ ., data = Train.set, method = "rf", metric = "Accuracy", preProcess = c("center","scale"),trControl = trainControl(method = "cv",number = 4, p = 0.6, allowParallel = TRUE))
+print(Model.rf)
+
+predictions.rf <- predict(Model.rf,newdata = Test.set)
+
+confusionMatrix(predictions.rf,Test.set$classe)
+```
+The accuracy of this model at 99.2% is very good.  The out-of-sample accuracy is .8%.  Therefor the Random Forest Model may be the right choice.  However before we decide we like to run Generalized Boosted Regression model.
+
+##7.3 Prediction with Generalized Boosted Regression
+```{r}
+#Model Generalized Boosted Regression
+set.seed(12)
+Model.Control <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+
+Model.gbm <- train(classe ~ ., data = Train.set, method = "gbm", trControl = Model.Control, verbose = FALSE)
+
+predictions.gbm <- predict(Model.gbm, newdata = Test.set )
+
+confusionMatrix(predictions.gbm,Test.set$classe)
+```
+The accuracy of this model is 96.24%, less than the Random Forest model.
+
+#8.Conclusion
+Based on its predicted accuracy of 99.2% the Random Forest model is chosen.
+
+#9. Validation of algorithm
+We apply Random Forest based machine learning algorithm to the 20 test cases from the test data.
+```{r}
+#apply model.rf to quizz
+prediction.quizz <- predict(Model.rf,newdata = quizz)
+prediction.quizz
+```
